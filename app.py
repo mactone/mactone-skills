@@ -19,6 +19,7 @@ import time
 from datetime import datetime
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
+from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # 添加專案路徑
@@ -31,6 +32,9 @@ from sync import OpenClawSync
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = Config.secret_key
+
+# 啟用 CORS（允許跨域請求）
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # 初始化
 db = TaskDatabase(Config.database_path, Config.db_encryption_key)
