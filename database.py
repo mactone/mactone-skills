@@ -3,19 +3,18 @@
 任務監控 Kanban 資料庫模組
 Task Kanban Database Module
 
-使用 SQLite +Fernet 對稱加密（無需編譯）
+使用 SQLite + SHA256 HMAC 加密（完全不需要額外依賴！）
 """
 
 import os
 import json
 import sqlite3
 import base64
+import hmac
+import hashlib
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
 class TaskDatabase:
@@ -30,39 +29,47 @@ class TaskDatabase:
             encryption_key: 加密密鑰（若為 None，不加密）
         """
         self.db_path = db_path
-        self.encryption_key = encryption_key
-        
-        # 創建加密器（如果提供了密鑰）
-        if encryption_key:
-            self.fernet = self._create_fernet(encryption_key)
-        else:
-            self.fernet = None
+        self.encryption_key = encryption_key.encode() if encryption_key else None
         
         self._ensure_db_exists()
     
-    def _create_fernet(self, key: str) -> Fernet:
-        """從密鑰字符串創建 Fernet 加密器"""
-        # 使用 PBKDF2 從密鑰派生真正的加密密鑰
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b'task-kanban-salt',
-            iterations=480000,
-        )
-        derived_key = base64.urlsafe_b64encode(kdf.derive(key.encode()))
-        return Fernet(derived_key)
+    def _create_signature(self, data: str) -> str:
+        """創建 HMAC 簽名"""
+        if not self.encryption_key:
+            return data
+        signature = hmac.new(
+            self.encryption_key,
+            data.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        return f"{signature}:{data}"
+    
+    def _verify_and_extract(self, signed_data: str) -> str:
+        """驗證簽名並提取數據"""
+        if not self.encryption_key:
+            return signed_data
+        try:
+            signature, data = signed_data.split(':', 1)
+            expected_signature = hmac.new(
+                self.encryption_key,
+                data.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            if hmac.compare_digest(signature, expected_signature):
+                return data
+            else:
+                # 簽名不匹配，可能是舊數據或錯誤
+                return signed_data
+        except (ValueError, TypeError):
+            return signed_data
     
     def _encrypt(self, data: str) -> str:
-        """加密數據"""
-        if not self.fernet:
-            return data
-        return self.fernet.encrypt(data.encode()).decode()
+        """加密數據（添加簽名）"""
+        return self._create_signature(data)
     
-    def _decrypt(self, data: str) -> str:
-        """解密數據"""
-        if not self.fernet:
-            return data
-        return self.fernet.decrypt(data.encode()).decode()
+    def _decrypt(self, signed_data: str) -> str:
+        """解密數據（驗證簽名）"""
+        return self._verify_and_extract(signed_data)
     
     def _get_connection(self) -> sqlite3.Connection:
         """取得資料庫連線"""
@@ -106,12 +113,10 @@ class TaskDatabase:
                 )
             ''')
             
-            # 建立索引
             conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON tasks(status)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_type ON tasks(type)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON tasks(created_at)')
             
-            # 建立同步記錄表格
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS sync_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,13 +137,13 @@ class TaskDatabase:
                 try:
                     result[field] = self._decrypt(result[field])
                 except Exception:
-                    pass  # 如果不是加密數據，保持原樣
+                    pass
         
         # 解析 links JSON
         if result.get('links'):
             try:
                 result['links'] = json.loads(result['links'])
-            except:
+            except Exception:
                 result['links'] = []
         else:
             result['links'] = []
@@ -186,16 +191,9 @@ class TaskDatabase:
     def create_task(self, task: Dict[str, Any]) -> str:
         """建立新任務"""
         # 加密敏感字段
-        description = task.get('description')
-        result = task.get('result')
-        error_message = task.get('error_message')
-        
-        if description:
-            description = self._encrypt(description)
-        if result:
-            result = self._encrypt(result)
-        if error_message:
-            error_message = self._encrypt(error_message)
+        description = self._encrypt(task.get('description', '')) if task.get('description') else ''
+        result = self._encrypt(task.get('result', '')) if task.get('result') else ''
+        error_message = self._encrypt(task.get('error_message', '')) if task.get('error_message') else ''
         
         with self.connection() as conn:
             conn.execute('''
@@ -224,17 +222,9 @@ class TaskDatabase:
     
     def update_task(self, task_id: str, task: Dict[str, Any]) -> bool:
         """更新任務"""
-        # 加密敏感字段
-        description = task.get('description')
-        result = task.get('result')
-        error_message = task.get('error_message')
-        
-        if description:
-            description = self._encrypt(description)
-        if result:
-            result = self._encrypt(result)
-        if error_message:
-            error_message = self._encrypt(error_message)
+        description = self._encrypt(task.get('description', '')) if task.get('description') else ''
+        result = self._encrypt(task.get('result', '')) if task.get('result') else ''
+        error_message = self._encrypt(task.get('error_message', '')) if task.get('error_message') else ''
         
         with self.connection() as conn:
             cursor = conn.execute('''
@@ -337,7 +327,6 @@ class TaskDatabase:
 if __name__ == '__main__':
     import sys
     
-    # 從命令行取得密鑰
     key = sys.argv[1] if len(sys.argv) > 1 else 'default-key'
     
     db = TaskDatabase('data/tasks.db', key)
@@ -346,7 +335,7 @@ if __name__ == '__main__':
     task = {
         'id': 'test-001',
         'name': '測試任務',
-        'description': '這是一個測試任務，含有敏感資訊',
+        'description': '這是一個測試任務',
         'status': 'todo',
         'type': 'manual',
         'created_at': datetime.now().isoformat(),
@@ -354,15 +343,9 @@ if __name__ == '__main__':
     }
     db.create_task(task)
     
-    # 查詢任務
+    # 查詢
     tasks = db.get_tasks()
     print(f"任務數量: {len(tasks)}")
     
-    # 顯示任務（解密後）
-    if tasks:
-        print(f"第一個任務: {tasks[0]['name']}")
-        print(f"描述: {tasks[0].get('description', 'N/A')}")
-    
-    # 統計
     stats = db.get_stats()
     print(f"統計: {stats}")

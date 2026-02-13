@@ -28,7 +28,8 @@ source venv/bin/activate
 
 ```bash
 pip install -r requirements.txt
-```
+
+# 僅需：flask、bcrypt、python-dotenv、requests
 
 ### 3. 設定環境變數
 
