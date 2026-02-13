@@ -65,7 +65,7 @@ class Config:
             print("⚠️  警告: 使用預設用戶名 'admin'，建議修改")
         
         if self.db_encryption_key == 'default-key-change-me':
-           ️  警告 print("⚠: 使用預設資料庫加密密鑰，請修改")
+            print("⚠️  警告: 使用預設資料庫加密密鑰，請修改")
         
         return True
 
@@ -73,3 +73,4 @@ class Config:
 # 預設配置實例
 config = Config.from_env()
 config.validate()
+

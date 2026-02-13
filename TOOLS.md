@@ -28,6 +28,31 @@ Things like:
 
 **為什麼？** 確保在不同設備間同步，避免衝突。
 
+### Ubuntu Python 環境規則
+
+**禁止：** 直接使用 pip 在全域安裝套件（會損壞系統級 Python 環境）
+
+**正確做法：** 使用虛擬環境 (Venv)
+
+```bash
+# 建立虛擬環境
+python -m venv venv
+
+# 啟動虛擬環境
+source venv/bin/activate  # Linux/macOS
+# 或
+venv\Scripts\activate     # Windows
+
+# 安裝依賴
+pip install -r requirements.txt
+
+# 停用虛擬環境
+deactivate
+```
+
+**常見套件問題：**
+- `sqlcipher` → 正確名稱是 `pysqlcipher3`
+
 ## Examples
 
 ```markdown
