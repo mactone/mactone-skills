@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🐱 喵喵任務看板</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div id="app" v-cloak>
+    <!-- 登入畫面 -->
+    <div v-if="!isAuthenticated" class="login-container">
+      <div class="login-card">
+        <div class="login-header">
+          <span class="mdi mdi-cat"></span>
+          <h1>喵喵任務看板</h1>
+        </div>
+        <form @submit.prevent="login">
+          <div class="form-group">
+            <label>用戶名</label>
+            <input type="text" v-model="username" placeholder="輸入用戶名" required>
+          </div>
+          <div class="form-group">
+            <label>密碼</label>
+            <input type="password" v-model="password" placeholder="輸入密碼" required>
+          </div>
+          <button type="submit" :disabled="loading">
+            <span v-if="loading">登入中...</span>
+            <span v-else>🔐 登入</span>
+          </button>
+        </form>
+        <p v-if="error" class="error-message">{{ error }}</p>
+      </div>
+    </div>
+
+    <!-- Kanban 看板 -->
+    <div v-else class="kanban-container">
+      <!-- 頂部導航 -->
+      <header class="kanban-header">
+        <div class="header-left">
+          <span class="mdi mdi-cat mdi-24px"></span>
+          <h1>喵喵任務看板</h1>
+        </div>
+        <div class="header-right">
+          <button @click="refreshTasks" class="btn-icon" title="刷新">
+            <span class="mdi mdi-refresh"></span>
+          </button>
+          <button @click="showAddTask = true" class="btn-primary">
+            <span class="mdi mdi-plus"></span>
+            新增任務
+          </button>
+          <button @click="syncOpenclaw" class="btn-secondary" :disabled="syncing">
+            <span v-if="syncing" class="mdi mdi-loading mdi-spin"></span>
+            <span v-else class="mdi mdi-sync"></span>
+            同步
+          </button>
+          <button @click="logout" class="btn-icon">
+            <span class="mdi mdi-logout"></span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 統計資訊 -->
+      <div class="stats-bar">
+        <div class="stat-item">
+          <span class="stat-label">待辦</span>
+          <span class="stat-value stat-todo">{{ stats.todo }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">進行中</span>
+          <span class="stat-value stat-progress">{{ stats.inprogress }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">完成</span>
+          <span class="stat-value stat-done">{{ stats.done }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">錯誤</span>
+          <span class="stat-value stat-error">{{ stats.error }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">總計</span>
+          <span class="stat-value">{{ stats.total }}</span>
+        </div>
+      </div>
+
+      <!-- Kanban 看板 -->
+      <div class="kanban-board">
+        <div 
+          v-for="column in columns" 
+          :key="column.id" 
+          class="kanban-column"
+          @dragover.prevent
+          @drop="onDrop($event, column.id)"
+        >
+          <div class="column-header" :style="{ borderColor: column.color }">
+            <span class="column-icon" :style="{ color: column.color }">
+              <span class="mdi" :class="getColumnIcon(column.id)"></span>
+            </span>
+            <h2>{{ column.name }}</h2>
+            <span class="task-count">{{ column.tasks.length }}</span>
+          </div>
+          
+          <div class="column-content">
+            <div 
+              v-for="task in column.tasks" 
+              :key="task.id"
+              class="task-card"
+              draggable="true"
+              @dragstart="onDragStart($event, task)"
+              @click="showTaskDetail(task)"
+            >
+              <div class="task-header">
+                <span class="task-type-icon">
+                  <span v-if="task.type === 'cron'" class="mdi mdi-clock-outline" title="定時任務"></span>
+                  <span v-else class="mdi mdi-hand-pointing" title="手動任務"></span>
+                </span>
+                <span class="task-name">{{ task.name }}</span>
+              </div>
+              
+              <div v-if="task.description" class="task-description">
+                {{ truncate(task.description, 50) }}
+              </div>
+              
+              <div class="task-footer">
+                <span class="task-time">
+                  <span class="mdi mdi-clock-outline"></span>
+                  {{ formatTime(task.updated_at) }}
+                </span>
+                <span v-if="task.result" class="task-result" :title="task.result">
+                  <span class="mdi mdi-check-circle-outline"></span>
+                </span>
+                <span v-if="task.error_message" class="task-error" :title="task.error_message">
+                  <span class="mdi mdi-alert-circle-outline"></span>
+                </span>
+              </div>
+            </div>
+            
+            <div v-if="column.tasks.length === 0" class="empty-column">
+              <span class="mdi mdi-inbox-outline"></span>
+              <p>暫無任務</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 任務詳情 Modal -->
+    <div v-if="selectedTask" class="modal-overlay" @click.self="selectedTask = null">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>{{ selectedTask.name }}</h2>
+          <button @click="selectedTask = null" class="btn-close">
+            <span class="mdi mdi-close"></span>
+          </button>
+        </div>
+        
+        <div class="modal-body">
+          <div class="detail-row">
+            <label>狀態</label>
+            <select v-model="selectedTask.status" @change="updateTask">
+              <option value="todo">待辦</option>
+              <option value="inprogress">進行中</option>
+              <option value="done">完成</option>
+              <option value="error">錯誤</option>
+            </select>
+          </div>
+          
+          <div class="detail-row">
+            <label>類型</label>
+            <span>{{ selectedTask.type === 'cron' ? '🔄 定時任務' : '👆 手動任務' }}</span>
+          </div>
+          
+          <div class="detail-row">
+            <label>描述</label>
+            <p>{{ selectedTask.description || '無描述' }}</p>
+          </div>
+          
+          <div class="detail-row">
+            <label>建立時間</label>
+            <span>{{ formatTime(selectedTask.created_at) }}</span>
+          </div>
+          
+          <div class="detail-row">
+            <label>更新時間</label>
+            <span>{{ formatTime(selectedTask.updated_at) }}</span>
+          </div>
+          
+          <div v-if="selectedTask.executed_at" class="detail-row">
+            <label>執行時間</label>
+            <span>{{ formatTime(selectedTask.executed_at) }}</span>
+          </div>
+          
+          <div v-if="selectedTask.result" class="detail-row">
+            <label>執行結果</label>
+            <p class="result-text">{{ selectedTask.result }}</p>
+          </div>
+          
+          <div v-if="selectedTask.error_message" class="detail-row">
+            <label>錯誤訊息</label>
+            <p class="error-text">{{ selectedTask.error_message }}</p>
+          </div>
+          
+          <div v-if="selectedTask.links && selectedTask.links.length" class="detail-row">
+            <label>連結</label>
+            <ul class="links-list">
+              <li v-for="link in selectedTask.links" :key="link">
+                <a :href="link" target="_blank">{{ link }}</a>
+              </li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button @click="deleteTask" class="btn-danger">
+            <span class="mdi mdi-delete"></span>
+            刪除
+          </button>
+          <button @click="selectedTask = null" class="btn-secondary">
+            關閉
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新增任務 Modal -->
+    <div v-if="showAddTask" class="modal-overlay" @click.self="showAddTask = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>新增任務</h2>
+          <button @click="showAddTask = false" class="btn-close">
+            <span class="mdi mdi-close"></span>
+          </button>
+        </div>
+        
+        <form @submit.prevent="createTask">
+          <div class="modal-body">
+            <div class="form-group">
+              <label>任務名稱 *</label>
+              <input type="text" v-model="newTask.name" required>
+            </div>
+            
+            <div class="form-group">
+              <label>描述</label>
+              <textarea v-model="newTask.description" rows="3"></textarea>
+            </div>
+            
+            <div class="form-group">
+              <label>狀態</label>
+              <select v-model="newTask.status">
+                <option value="todo">待辦</option>
+                <option value="inprogress">進行中</option>
+                <option value="done">完成</option>
+                <option value="error">錯誤</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label>類型</label>
+              <select v-model="newTask.type">
+                <option value="manual">手動任務</option>
+                <option value="cron">定時任務</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="modal-footer">
+            <button type="button" @click="showAddTask = false" class="btn-secondary">取消</button>
+            <button type="submit" class="btn-primary">建立</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
