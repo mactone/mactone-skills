@@ -18,8 +18,7 @@ import uuid
 import time
 from datetime import datetime
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory, render_template_string
-from flask_cors import CORS
+from flask import Flask, request, jsonify, send_from_directory, after_request
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # 添加專案路徑
@@ -34,7 +33,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = Config.secret_key
 
 # 啟用 CORS（允許跨域請求）
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+# CORS handled by after_request middleware
 
 # 初始化
 db = TaskDatabase(Config.database_path, Config.db_encryption_key)
@@ -251,3 +250,26 @@ if __name__ == '__main__':
     """)
     
     app.run(host=Config.server_host, port=Config.server_port, debug=False)
+
+# CORS Middleware（手動處理跨域請求）
+@app.after_request
+def add_cors_headers(response):
+    """為所有 API 回應添加 CORS header"""
+    if request.path.startswith('/api/'):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Max-Age'] = '3600'
+    return response
+
+
+# OPTIONS 請求處理（預檢請求）
+@app.route('/api/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    from flask import Response
+    response = Response(status=204)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
+
