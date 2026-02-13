@@ -18,26 +18,31 @@ import uuid
 import time
 from datetime import datetime
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory, after_request
+from flask import Flask, request, jsonify, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # 添加專案路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import Config
+from config import get_config
 from database import TaskDatabase
 from auth import AuthMiddleware
 from sync import OpenClawSync
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = Config.secret_key
+
+# 從環境變數載入配置
+config = get_config()
+config.validate()
+
+app.config['SECRET_KEY'] = config.secret_key
 
 # 啟用 CORS（允許跨域請求）
 # CORS handled by after_request middleware
 
 # 初始化
-db = TaskDatabase(Config.database_path, Config.db_encryption_key)
-auth = AuthMiddleware(Config.username, Config.password_hash)
+db = TaskDatabase(config.database_path, config.db_encryption_key)
+auth = AuthMiddleware(config.username, config.password_hash)
 
 
 def require_auth(f):
@@ -206,7 +211,7 @@ def get_sync_status():
 @require_auth
 def verify_auth():
     """驗證登入"""
-    return jsonify({'success': True, 'username': Config.username})
+    return jsonify({'success': True, 'username': config.username})
 
 
 @app.route('/api/config', methods=['GET'])
@@ -243,13 +248,13 @@ if __name__ == '__main__':
 ║           🐱 喵喵任務監控 Kanban 系統                        ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  🚀 伺服器啟動中...                                        ║
-║  📍 本地地址: http://localhost:{Config.server_port}                   ║
-║  🔐 認證用戶: {Config.username:<46}║
-║  📁 資料庫: {Config.database_path:<43}║
+║  📍 本地地址: http://localhost:{config.server_port}                   ║
+║  🔐 認證用戶: {config.username:<46}║
+║  📁 資料庫: {config.database_path:<43}║
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
-    app.run(host=Config.server_host, port=Config.server_port, debug=False)
+    app.run(host=config.server_host, port=config.server_port, debug=False)
 
 # CORS Middleware（手動處理跨域請求）
 @app.after_request
@@ -272,4 +277,9 @@ def handle_options(path):
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     return response
+
+
+# 調試：打印認證信息
+import logging
+logging.basicConfig(level=logging.DEBUG)
 

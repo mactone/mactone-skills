@@ -70,7 +70,7 @@ class Config:
         return True
 
 
-# 預設配置實例
-config = Config.from_env()
-config.validate()
+def get_config() -> Config:
+    """取得當前配置（從環境變數載入）"""
+    return Config.from_env()
 
