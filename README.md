@@ -11,55 +11,44 @@
 - 🔐 **安全認證** — Basic Auth + bcrypt 加密
 - 📱 **響應式設計** — 支援手機和電腦瀏覽器
 - 🌐 **遠端存取** — 可透過 ngrok 從外部訪問
-- 📁 **本地儲存** — SQLite 加密資料庫
+- 📁 **本地儲存** — SQLite + Fernet 對稱加密
 - 🔗 **GitHub 同步** — 自動同步到 GitHub
 
-## 📁 專案結構
+## 📦 安裝
 
-```
-task-kanban/
-├── app.py                    # Flask 主程式
-├── config.py                 # 配置管理
-├── database.py              # SQLite 資料庫操作
-├── auth.py                  # 認證模組
-├── sync.py                  # OpenClaw 同步
-├── requirements.txt          # Python 依賴
-├── static/
-│   ├── index.html          # Kanban 看板
-│   ├── login.html          # 登入頁面
-│   ├── css/style.css       # 樣式
-│   └── js/app.js           # Vue.js 應用
-└── data/
-    └── tasks.db            # SQLite 資料庫
+### 1. 建立虛擬環境（Ubuntu 必需）
+
+```bash
+cd task-kanban
+python -m venv venv
+source venv/bin/activate
 ```
 
-## 🚀 快速開始
-
-### 1. 安裝依賴
+### 2. 安裝依賴
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 設定環境變數
+### 3. 設定環境變數
 
 ```bash
 export KANBAN_USERNAME="你的用戶名"
 export KANBAN_PASSWORD="你的密碼"
-export KANBAN_DB_KEY="資料庫加密密鑰（32字符）"
-export KANBAN_SECRET_KEY="Flask 密鑰"
+export KANBAN_DB_KEY="資料庫加密密鑰（隨機字符串）"
 ```
 
-### 3. 執行
+### 4. 執行
 
 ```bash
 python app.py
 ```
 
-### 4. 訪問
+### 5. 遠端存取（ngrok）
 
-- **本地**: http://localhost:5000
-- **遠端**: 透過 ngrok http 5000
+```bash
+ngrok http 5000
+```
 
 ## 🔐 設定密碼
 
