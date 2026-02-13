@@ -18,26 +18,37 @@ import uuid
 import time
 from datetime import datetime
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory, after_request
+from flask import Flask, request, jsonify, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
+import werkzeug
 
 # 添加專案路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import Config
+from config import get_config
 from database import TaskDatabase
 from auth import AuthMiddleware
 from sync import OpenClawSync
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = Config.secret_key
+
+# 禁用 werkzeug 的自動 CSP header
+WERKZEUG_VERSION = getattr(werkzeug, '__version__', '0.0.0')
+if WERKZEUG_VERSION.startswith('3.'):
+    app.config['RESTRICT_FILE_UPLOAD_EXTENSION'] = False
+
+# 從環境變數載入配置
+config = get_config()
+config.validate()
+
+app.config['SECRET_KEY'] = config.secret_key
 
 # 啟用 CORS（允許跨域請求）
 # CORS handled by after_request middleware
 
 # 初始化
-db = TaskDatabase(Config.database_path, Config.db_encryption_key)
-auth = AuthMiddleware(Config.username, Config.password_hash)
+db = TaskDatabase(config.database_path, config.db_encryption_key)
+auth = AuthMiddleware(config.username, config.password_hash)
 
 
 def require_auth(f):
@@ -50,24 +61,71 @@ def require_auth(f):
     return decorated
 
 
+# ==================== CORS Middleware ====================
+
+@app.after_request
+def add_cors_headers(response):
+    """為所有 API 回應添加 CORS header 和禁用快取"""
+    # 禁用快取
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    
+    if request.path.startswith('/api/'):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Max-Age'] = '3600'
+    else:
+        # 允許 eval 給 Vue.js 使用（包含 unsafe-eval）
+        response.headers['Content-Security-Policy'] = "default-src * data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; connect-src *;"
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
+
+# OPTIONS 請求處理（預檢請求）- 必須放在所有路由之前
+@app.route('/api/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    from flask import Response
+    response = Response(status=204)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
+
+
 # ==================== API 端點 ====================
 
 @app.route('/')
 def index():
     """Kanban 看板頁面"""
-    return send_from_directory('static', 'index.html')
+    response = send_from_directory('static', 'index.html')
+    # 移除 CSP header 允許 CDN 加載
+    return response
 
 
 @app.route('/login')
 def login_page():
     """登入頁面"""
-    return send_from_directory('static', 'login.html')
+    response = send_from_directory('static', 'login.html')
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     """靜態檔案"""
     return send_from_directory('static', filename)
+
+
+@app.route('/favicon.ico')
+def favicon():
+    """網站圖示"""
+    return send_from_directory('static', 'favicon.ico')
 
 
 # --- 任務 API ---
@@ -206,7 +264,7 @@ def get_sync_status():
 @require_auth
 def verify_auth():
     """驗證登入"""
-    return jsonify({'success': True, 'username': Config.username})
+    return jsonify({'success': True, 'username': config.username})
 
 
 @app.route('/api/config', methods=['GET'])
@@ -243,33 +301,11 @@ if __name__ == '__main__':
 ║           🐱 喵喵任務監控 Kanban 系統                        ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  🚀 伺服器啟動中...                                        ║
-║  📍 本地地址: http://localhost:{Config.server_port}                   ║
-║  🔐 認證用戶: {Config.username:<46}║
-║  📁 資料庫: {Config.database_path:<43}║
+║  📍 本地地址: http://localhost:{config.server_port}                   ║
+║  🔐 認證用戶: {config.username:<46}║
+║  📁 資料庫: {config.database_path:<43}║
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
-    app.run(host=Config.server_host, port=Config.server_port, debug=False)
-
-# CORS Middleware（手動處理跨域請求）
-@app.after_request
-def add_cors_headers(response):
-    """為所有 API 回應添加 CORS header"""
-    if request.path.startswith('/api/'):
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-        response.headers['Access-Control-Max-Age'] = '3600'
-    return response
-
-
-# OPTIONS 請求處理（預檢請求）
-@app.route('/api/<path:path>', methods=['OPTIONS'])
-def handle_options(path):
-    from flask import Response
-    response = Response(status=204)
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-    return response
+    app.run(host=config.server_host, port=config.server_port, debug=False)
 
